@@ -41,7 +41,7 @@ def prepare_cores(ns) -> vapoursynth.Core:
     return core
 
 def find_override(database: str, identifier: str, bound: bool) -> Optional[str]:
-    path = os.path.join(database, f"{identifier}.{'un'*(not bound) + 'bound'}.pyi")
+    path = os.path.join(database, f"{identifier}-{'un'*(not bound) + 'bound'}.pyi")
     if not os.path.exists(path):
         return path
 
