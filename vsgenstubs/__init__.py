@@ -7,7 +7,7 @@ import inspect
 import argparse
 import keyword
 import vapoursynth
-from typing import Dict, Sequence, Union, NamedTuple
+from typing import Dict, Sequence, Union, NamedTuple, Optional
 
 
 def indent(string: str, spaces: int) -> str:
@@ -19,13 +19,13 @@ parser.add_argument("--plugin", "-p", action="append", help="Also include manual
 parser.add_argument("--avs-plugin", action="append", help="Also include manually added AviSynth plugin.")
 parser.add_argument("--output", "-o", default="vapoursynth.pyi", help="Where to output the file. The special value '-' means output to stdout. The spcial value '@' will install it as a stub-package inside site-packages.")
 parser.add_argument("--pyi-template", default=os.path.join(os.path.dirname(__file__), "_vapoursynth.part.pyi"), help="Don't use unless you know what you are doing.")
+parser.add_argument("--override-database", default=os.path.join(os.path.dirname(__file__), "overrides", help="This directory contains overrides for various plugins that have special parameters.")
 
 
 class PluginMeta(NamedTuple):
     name: str
     description: str
     functions: str
-
 
 
 def prepare_cores(ns) -> vapoursynth.Core:
@@ -40,8 +40,17 @@ def prepare_cores(ns) -> vapoursynth.Core:
 
     return core
 
+def find_override(database: str, identifier: str, bound: bool) -> Optional[str]:
+    path = os.path.join(database, f"{identifier}.{'un'*(not bound) + 'bound'}.pyi")
+    if not os.path.exists(path):
+        return path
 
-def retrieve_ns_and_funcs(core: vapoursynth.Core, *, bound: bool=False) -> Dict[str, PluginMeta]:
+    with open(path) as f:
+        return f.read()
+        
+                    
+
+def retrieve_ns_and_funcs(database: str, core: vapoursynth.Core, *, bound: bool=False) -> Dict[str, PluginMeta]:
     result = {}
 
     base = core
@@ -49,10 +58,13 @@ def retrieve_ns_and_funcs(core: vapoursynth.Core, *, bound: bool=False) -> Dict[
         base = core.std.BlankClip()
 
     for v in core.get_plugins().values():
+        funcs = find_override(database, v["identifier"], bound)
+        if funcs is None:
+            "\n".join(retrieve_func_sigs(base, v["namespace"], v["functions"].keys()))
         result[v["namespace"]] = PluginMeta(
             v["namespace"],
             v["name"],
-            "\n".join(retrieve_func_sigs(base, v["namespace"], v["functions"].keys()))
+            funcs
         )
     return result
 
@@ -82,7 +94,7 @@ def retrieve_func_sigs(core: Union[vapoursynth.Core, vapoursynth.VideoNode], ns:
 
         # Add a self.
         signature = signature.replace("(", "(self, ").replace(", )", ")")
-        result.append(f"    def {func}{signature}: ...")
+        result.append(f"def {func}{signature}: ...")
     return result
 
 
@@ -94,7 +106,7 @@ def make_plugin_classes(suffix: str, sigs: Dict[str, PluginMeta]) -> str:
         result.append('    This class implements the module definitions for the corresponding VapourSynth plugin.')
         result.append('    This class cannot be imported.')
         result.append('    """')
-        result.append(pfuncs.functions)
+        result.append(indent(pfuncs.functions, 4))
         result.append("")
         result.append("")
     return "\n".join(result)
@@ -142,8 +154,8 @@ def main(argv=None):
     args = parser.parse_args(args=argv)
     core = prepare_cores(args)
 
-    bound = retrieve_ns_and_funcs(core, bound=True)
-    unbound = retrieve_ns_and_funcs(core, bound=False)
+    bound = retrieve_ns_and_funcs(args.override_database, core, bound=True)
+    unbound = retrieve_ns_and_funcs(args.override_database, core, bound=False)
 
     implementations = make_plugin_classes("Unbound", unbound) + "\n" + make_plugin_classes("Bound", bound)
 
